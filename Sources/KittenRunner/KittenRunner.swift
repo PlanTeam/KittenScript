@@ -177,7 +177,7 @@ public class Code {
                     throw ParserError.invalidExpression
                 }
                 
-                print(expression)
+                print("Return value: \(expression)")
                 
                 position += expressionResult.consumed
             default:
@@ -195,31 +195,41 @@ public class Code {
             
             var key = [UInt8]()
             
+            // Loop over string
             while code.count > consumed && code[consumed] != 0x00 {
                 key.append(code[consumed])
                 
                 consumed += 1
             }
             
+            // Null terminator
+            consumed += 1
+            
+            // Transform key into name string
             guard let name = String.init(bytes: key, encoding: .utf8) else {
-                return (nil, consumed)
+                return (nil, consumed - position)
             }
             
+            // Find the function
             guard let function = self.functions[name] else {
-                return (nil, consumed)
+                return (nil, consumed - position)
             }
             
-            guard let parametersResponse = parseParameters(fromPosition: position + consumed) else {
-                return (nil, consumed)
-            }
+            // Make the parameters
+            let parametersResponse = try makeParameters(atPosition: consumed)
             
             consumed += parametersResponse.consumed
             
             let expression = function(parametersResponse.parameters)
             
-            return (expression, consumed)
+            return (expression, consumed - position)
         case 0x03:
-            fatalError("0x03")
+            var consumed = position
+            let literalResponse = try makeLiteral(atPosition: position)
+            
+            consumed += literalResponse.consumed
+            
+            return (.literal(literalResponse.literal), consumed - position)
         case 0x04:
             fatalError("0x04")
         case 0x05:
@@ -229,8 +239,85 @@ public class Code {
         }
     }
     
-    func parseParameters(fromPosition position: Int) -> (parameters: ParameterList, consumed: Int)? {
-        return ([:], 0)
+    func makeLiteral(atPosition position: Int) throws -> (literal: Literal, consumed: Int) {
+        var consumed = position
+        let type = code[consumed]
+        
+        consumed += 1
+        
+        switch type {
+        case 0x01:
+            var text = [UInt8]()
+            let textLength = try UInt32.instantiate(bytes: Array(code[consumed..<consumed + 4]))
+            
+            consumed += 4
+            
+            guard position + Int(textLength) < code.count else {
+                fatalError("Bad length")
+            }
+            
+            var keyPos = 0
+            
+            while keyPos < Int(textLength) && keyPos + consumed < code.count {
+                text.append(code[consumed + keyPos])
+                keyPos += 1
+            }
+            
+            consumed += keyPos
+            
+            guard let string = String(bytes: text, encoding: .utf8) else {
+                fatalError("KAAS")
+            }
+            
+            return (.string(string), consumed - position)
+        case 0x02:
+            fatalError("Double")
+        case 0x03:
+            if code[consumed] == 0x00 {
+                return (.boolean(false), consumed - position)
+            }
+            
+            return (.boolean(true), consumed - position)
+        case 0x04:
+            fatalError("Script")
+        default:
+            fatalError("UNSUPPORTED")
+        }
+    }
+    
+    func makeParameters(atPosition position: Int) throws -> (parameters: ParameterList, consumed: Int) {
+        var consumed = position
+        var parameters = ParameterList()
+        
+        while code.count > consumed && code[consumed] != 0x00 {
+            var key = [UInt8]()
+            
+            while code.count > consumed && code[consumed] != 0x00 {
+                key.append(code[consumed])
+                
+                consumed += 1
+            }
+            
+            consumed += 1
+            
+            guard let name = String.init(bytes: key, encoding: .utf8) else {
+                return (parameters, consumed - position)
+            }
+            
+            let type = code[consumed]
+            
+            consumed += 1
+            
+            let expressionResult = try makeExpression(fromPosition: consumed, withType: type)
+            consumed += expressionResult.consumed
+            
+            parameters[name] = expressionResult.expression
+        }
+        
+        // Add one for the null terminator
+        consumed += 1
+        
+        return (parameters, consumed - position)
     }
 }
 
