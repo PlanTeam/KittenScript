@@ -1,11 +1,10 @@
 import XCTest
-@testable import KittenScript
+//@testable import KittenCompiler
+//@testable import KittenRunner
 
 class KittenScriptTests: XCTestCase {
     func testExample() {
-        // This is an example of a functional test case.
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
-        XCTAssertEqual(KittenScript().text, "Hello, World!")
+        
     }
 
 
