@@ -1,0 +1,24 @@
+script      ::= uint32 s_list "\x00"		Statement list
+s_list      ::= statement s_list | ""
+statement   ::= "\x01" expression true_statement_len false_statement_len true_statement false_statement      true_condition_len  (uint32) is the total length of true_condition in bytes, just like false_... Expression must result in a boolean and is the condition
+              | "\x02" script     Statement group (embedded script)
+              | "\x03" var_id expression     Assignment
+              | "\x04" expression       Plain expression, result is thrown away
+
+expression  ::= "\x01" var_id parameter_list      Local function call
+              | "\x02" cstring parameter_list     Dynamic function call
+              | "\x03" literal           Literal value
+              | "\x04" var_id           Variable read
+              | "\x05" cstring          Read parameter with name `cstring`
+
+literal     ::= "\x01" string  String value
+              | "\x02" double  Number value (64 bit)
+              | "\x03" "\x00" boolean false
+              | "\x03" "\x01" boolean true
+              | "\x04" script       Function
+
+parameter_list ::= parameter parameter_list | "\x00"
+parameter   ::= cstring expression
+string      ::= uint32 (byte*)         NOT null terminated
+cstring	    ::=	(byte*) "\x00"
+var_id      ::= uint32

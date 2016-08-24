@@ -1,0 +1,5 @@
+if parameters.input {
+  result: true
+}
+
+result: false
