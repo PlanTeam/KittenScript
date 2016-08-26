@@ -1,176 +1,102 @@
 import Foundation
-
-
-/// All errors that can occur when (de)serializing BSON
-public enum DeserializationError : Error {
-    /// The Document doesn't have a valid length
-    case InvalidDocumentLength
-    
-    /// The instantiating went wrong because the element has an invalid size
-    case InvalidElementSize
-    
-    /// The contents of the BSON binary data was invalid
-    case InvalidElementContents
-    
-    /// The BSON Element type was unknown
-    case UnknownElementType
-    
-    /// The lsat element of the BSON Binary Array was invalid
-    case InvalidLastElement
-    
-    /// Something went wrong with parsing (yeah.. very specific)
-    case ParseError
-    
-    /// This operation was invalid
-    case InvalidOperation
-    
-    case unsupportedLiteralType(UInt8)
-}
-
-public extension String {
-    /// This `String` as c-string
-    public var cStringBytes : [UInt8] {
-        var byteArray = self.utf8.filter{$0 != 0x00}
-        byteArray.append(0x00)
-        
-        return byteArray
-    }
-    
-    /// Instantiate a string from BSON (UTF8) data, including the length of the string.
-    public static func instantiate(bytes data: [UInt8]) throws -> String {
-        var 🖕 = 0
-        
-        return try instantiate(bytes: data, consumedBytes: &🖕)
-    }
-    
-    /// Instantiate a string from BSON (UTF8) data, including the length of the string.
-    public static func instantiate(bytes data: [UInt8], consumedBytes: inout Int) throws -> String {
-        let res = try _instant(bytes: data)
-        consumedBytes = res.0
-        return res.1
-    }
-    
-    private static func _instant(bytes data: [UInt8]) throws -> (Int, String) {
-        // Check for null-termination and at least 5 bytes (length spec + terminator)
-        guard data.count >= 5 && data.last == 0x00 else {
-            throw DeserializationError.InvalidLastElement
-        }
-        
-        // Get the length
-        let length = try Int32.instantiate(bytes: Array(data[0...3]))
-        
-        // Check if the data is at least the right size
-        guard data.count >= Int(length) + 4 else {
-            throw DeserializationError.ParseError
-        }
-        
-        // Empty string
-        if length == 1 {
-            return (5, "")
-        }
-        
-        guard length > 0 else {
-            throw DeserializationError.ParseError
-        }
-        
-        var stringData = Array(data[4..<Int(length + 3)])
-        
-        guard let string = String(bytesNoCopy: &stringData, length: stringData.count, encoding: String.Encoding.utf8, freeWhenDone: false) else {
-            throw DeserializationError.ParseError
-        }
-        
-        return (Int(length + 4), string)
-    }
-    
-    /// Instantiate a String from a CString (a null terminated string of UTF8 characters, not containing null)
-    public static func instantiateFromCString(bytes data: [UInt8]) throws -> String {
-        var 🖕 = 0
-        
-        return try instantiateFromCString(bytes: data, consumedBytes: &🖕)
-    }
-    
-    /// Instantiate a String from a CString (a null terminated string of UTF8 characters, not containing null)
-    public static func instantiateFromCString(bytes data: [UInt8], consumedBytes: inout Int) throws -> String {
-        let res = try _cInstant(bytes: data)
-        consumedBytes = res.0
-        return res.1
-    }
-    
-    private static func _cInstant(bytes data: [UInt8]) throws -> (Int, String) {
-        guard data.contains(0x00) else {
-            throw DeserializationError.ParseError
-        }
-        
-        guard let stringData = data.split(separator: 0x00, maxSplits: 1, omittingEmptySubsequences: false).first else {
-            throw DeserializationError.ParseError
-        }
-        
-        guard let string = String(bytes: stringData, encoding: String.Encoding.utf8) else {
-            throw DeserializationError.ParseError
-        }
-        
-        return (stringData.count+1, string)
-    }
-}
-
-extension Integer {
-    public static var size: Int {
-        return sizeof(Self.self)
-    }
-    
-    public var bytes : [UInt8] {
-        var integer = self
-        return withUnsafePointer(&integer) {
-            Array(UnsafeBufferPointer(start: UnsafePointer<UInt8>($0), count: Self.size))
-        }
-    }
-    
-    public static func instantiate(bytes data: [UInt8]) throws -> Self {
-        guard data.count >= self.size else {
-            throw DeserializationError.InvalidElementSize
-        }
-        
-        return UnsafePointer<Self>(data).pointee
-    }
-}
+import CommonKitten
 
 enum ParserError: Error {
+    case unsupportedLiteralType(UInt8)
     case invalidCodeLength
     case invalidExpression
     case invalidStatement
     case invalidFunction(String)
+    case invalidParameter(String)
 }
 
-public typealias NativeFunction = ((ParameterList)->(Expression))
-
+/// The Script's Running Context
 public class Context {
+    /// A natively implemented function that's exposed in the Context
+    public typealias NativeFunction = ((ParameterList, Scope) throws -> (Expression))
+    
     public var functions = [String: NativeFunction]()
-    public var variables = [UInt32: Expression]()
+    public var variables = [String: Expression]()
+}
+
+public class Scope {
+    internal var vars = [UInt32: Expression]()
+    internal var superScope: Scope? = nil
+    public let parameters: ParameterList
+    
+    public subscript(key: UInt32) -> Expression {
+        get {
+            if let value = superScope?.vars[key] {
+                return value
+            }
+            
+            if let value = vars[key] {
+                return value
+            }
+            
+            return .null
+        }
+        set {
+            if superScope?.contains(key) == true {
+               superScope?[key] = newValue
+            } else {
+                vars[key] = newValue
+            }
+        }
+    }
+    
+    public func contains(_ key: UInt32) -> Bool {
+        if superScope?.contains(key) == true {
+            return true
+        }
+        
+        return vars.keys.contains(key)
+    }
+    
+    public var keys: [UInt32] {
+        var response = Array(vars.keys)
+        response.append(contentsOf: superScope?.keys ?? [])
+        
+        return response
+    }
+    
+    public init(parameters: ParameterList = [:]) {
+        self.parameters = parameters
+    }
+    
+    internal init(subscopeOf scope: Scope, parameters: ParameterList = [:]) {
+        self.superScope = scope
+        self.parameters = parameters
+    }
 }
 
 public class Code {
+    /// The Code in binary form to execute
     public var code: [UInt8] = []
+    
+    /// The context to use for the execution
     public var context = Context()
     
     public init() {}
     
-    public func run(inContext: [String: Expression]) throws {
+    /// Allows you to run the code within a given context
+    public func run(inScope scope: Scope) throws {
         let length = Int(UnsafePointer<UInt32>(Array(code[0..<4])).pointee)
         
         guard code.count >= length else {
             throw ParserError.invalidCodeLength
         }
         
-        let statement = try makeStatement(atPosition: 0, withType: 0x02)
+        let statement = try makeStatement(atPosition: 0, withType: 0x02, inScope: scope)
         
         guard let s = statement.statement else {
             throw ParserError.invalidStatement
         }
         
-        try s.run(inContext: context)
+        try s.run(inContext: context, inScope: scope)
     }
     
-    func makeStatement(atPosition position: Int, withType type: UInt8) throws -> (statement: Statement?, consumed: Int) {
+    func makeStatement(atPosition position: Int, withType type: UInt8, inScope scope: Scope) throws -> (statement: Statement?, consumed: Int) {
         var consumed = position
         
         switch type {
@@ -179,7 +105,7 @@ public class Code {
             
             consumed += 1
             
-            let expressionResult = try makeExpression(fromPosition: consumed, withType: type)
+            let expressionResult = try makeExpression(fromPosition: consumed, withType: type, inScope: scope)
             
             guard let expression = expressionResult.expression else {
                 throw ParserError.invalidExpression
@@ -193,7 +119,7 @@ public class Code {
             
             consumed += 4
             
-            let trueStatementResponse = try makeStatement(atPosition: consumed, withType: type)
+            let trueStatementResponse = try makeStatement(atPosition: consumed, withType: type, inScope: scope)
             
             guard let trueStatement = trueStatementResponse.statement else {
                 throw ParserError.invalidStatement
@@ -204,7 +130,7 @@ public class Code {
             if falseLength == 0 {
                 return (Statement.ifStatement(expression: expression, trueStatement: trueStatement, falseStatement: nil), consumed - position)
             } else {
-                let falseStatementResponse = try makeStatement(atPosition: consumed, withType: type)
+                let falseStatementResponse = try makeStatement(atPosition: consumed, withType: type, inScope: scope)
                 
                 consumed += falseLength
                 
@@ -219,7 +145,7 @@ public class Code {
                 let type = code[consumed]
                 consumed += 1
                 
-                let statementResponse = try makeStatement(atPosition: consumed, withType: type)
+                let statementResponse = try makeStatement(atPosition: consumed, withType: type, inScope: scope)
                 
                 consumed += statementResponse.consumed
                 
@@ -240,7 +166,7 @@ public class Code {
             
             consumed += 1
             
-            let expressionResult = try makeExpression(fromPosition: consumed, withType: type)
+            let expressionResult = try makeExpression(fromPosition: consumed, withType: type, inScope: scope)
             
             guard let expression = expressionResult.expression else {
                 throw ParserError.invalidExpression
@@ -254,7 +180,7 @@ public class Code {
             
             consumed += 1
             
-            let expressionResult = try makeExpression(fromPosition: consumed, withType: expressionType)
+            let expressionResult = try makeExpression(fromPosition: consumed, withType: expressionType, inScope: scope)
             
             guard let expression = expressionResult.expression else {
                 throw ParserError.invalidExpression
@@ -270,10 +196,22 @@ public class Code {
         }
     }
     
-    func makeExpression(fromPosition position: Int, withType type: UInt8) throws -> (expression: Expression?, consumed: Int) {
+    func makeExpression(fromPosition position: Int, withType type: UInt8, inScope scope: Scope) throws -> (expression: Expression?, consumed: Int) {
         switch type {
         case 0x01:
-            fatalError("0x01")
+            var consumed = position
+            
+            let variableID = UnsafePointer<UInt32>(Array(code[consumed..<consumed + 4])).pointee
+            
+            consumed += 4
+            
+            let parametersResponse = try makeParameters(atPosition: consumed, inScope: scope)
+            
+            consumed += parametersResponse.consumed
+            
+            // TODO: Return values
+            return (.localFunctionCall(id: variableID, parameterList: parametersResponse.parameters), consumed - position)
+            
         case 0x02:
             var consumed = position
             
@@ -295,7 +233,7 @@ public class Code {
             }
             
             // Make the parameters
-            let parametersResponse = try makeParameters(atPosition: consumed)
+            let parametersResponse = try makeParameters(atPosition: consumed, inScope: scope)
             
             consumed += parametersResponse.consumed
             
@@ -306,7 +244,7 @@ public class Code {
             
             consumed += 1
             
-            let literalResponse = try makeLiteral(atPosition: consumed, withType: type)
+            let literalResponse = try makeLiteral(atPosition: consumed, withType: type, inScope: scope)
             
             consumed += literalResponse.consumed
             
@@ -314,15 +252,33 @@ public class Code {
         case 0x04:
             let d = UnsafePointer<UInt32>(Array(code[position..<position + 4])).pointee
             
-            return (context.variables[d], 4)
+            return (.variable(d), 4)
         case 0x05:
-            fatalError("0x05")
+            var consumed = position
+            
+            var key = [UInt8]()
+            
+            // Loop over string
+            while code.count > consumed && code[consumed] != 0x00 {
+                key.append(code[consumed])
+                
+                consumed += 1
+            }
+            
+            // Null terminator
+            consumed += 1
+            
+            guard  let keyString = String(bytes: key, encoding: .utf8) else {
+                return (nil, consumed - position)
+            }
+            
+            return (.parameter(keyString), consumed - position)
         default:
             return (nil, 0)
         }
     }
     
-    func makeLiteral(atPosition position: Int, withType type: UInt8) throws -> (literal: Literal, consumed: Int) {
+    func makeLiteral(atPosition position: Int, withType type: UInt8, inScope scope: Scope) throws -> (literal: Literal, consumed: Int) {
         var consumed = position
         
         switch type {
@@ -361,13 +317,25 @@ public class Code {
             
             return (.boolean(true), consumed - position)
         case 0x04:
-            fatalError("Script")
+            var consumed = position
+            
+            let subscope = Scope(subscopeOf: scope)
+            
+            let statementResponse = try makeStatement(atPosition: consumed, withType: 0x02, inScope: subscope)
+            
+            guard let statement = statementResponse.statement, case .script(let statements) = statement else {
+                throw ParserError.invalidStatement
+            }
+            
+            consumed += statementResponse.consumed
+            
+            return (.script(statements), consumed - position)
         default:
-            throw DeserializationError.unsupportedLiteralType(type)
+            throw ParserError.unsupportedLiteralType(type)
         }
     }
     
-    func makeParameters(atPosition position: Int) throws -> (parameters: ParameterList, consumed: Int) {
+    func makeParameters(atPosition position: Int, inScope scope: Scope) throws -> (parameters: ParameterList, consumed: Int) {
         var consumed = position
         var parameters = ParameterList()
         
@@ -390,7 +358,7 @@ public class Code {
             
             consumed += 1
             
-            let expressionResult = try makeExpression(fromPosition: consumed, withType: type)
+            let expressionResult = try makeExpression(fromPosition: consumed, withType: type, inScope: scope)
             consumed += expressionResult.consumed
             
             parameters[name] = expressionResult.expression
@@ -412,30 +380,30 @@ public indirect enum Statement {
     case expression(Expression)
     case null
     
-    func run(inContext context: Context) throws {
+    func run(inContext context: Context, inScope scope: Scope) throws {
         switch self {
         case .script(let statements):
             for statement in statements {
-                try statement.run(inContext: context)
+                try statement.run(inContext: context, inScope: scope)
             }
         case .assignment(let id, let expression):
-            context.variables[id] = try expression.run(inContext: context)
+            scope[id] = try expression.run(inContext: context, inScope: scope)
         case .expression(let expression):
-            _ = try expression.run(inContext: context)
+            _ = try expression.run(inContext: context, inScope: scope)
         case .ifStatement(let expression, let trueStatement, let falseStatement):
-            guard let expression = try expression.run(inContext: context) else {
-                throw ParserError.invalidExpression
-            }
+            let expression = try expression.run(inContext: context, inScope: scope)
             
             guard case Expression.literal(let literal) = expression, case .boolean(let bool) = literal else {
                 throw ParserError.invalidExpression
             }
             
+            let subscope = Scope(subscopeOf: scope)
+            
             if bool {
-                try trueStatement.run(inContext: context)
+                try trueStatement.run(inContext: context, inScope: subscope)
                 
             } else if let falseStatement = falseStatement {
-                try falseStatement.run(inContext: context)
+                try falseStatement.run(inContext: context, inScope: subscope)
             }
         case .null:
             break
@@ -453,23 +421,54 @@ public enum Expression {
     case parameter(String)
     case null
     
-    func run(inContext context: Context) throws -> Expression? {
+    func run(inContext context: Context, inScope scope: Scope) throws -> Expression {
         switch self {
+        case .localFunctionCall(let id, let parameterList):
+            guard case .literal(let funcLiteral) = try scope[id].run(inContext: context, inScope: scope) else {
+                throw ParserError.invalidExpression
+            }
+            
+            guard case .script(let statements) = funcLiteral else {
+                throw ParserError.invalidExpression
+            }
+            
+            let subscope = Scope(subscopeOf: scope, parameters: parameterList)
+            
+            for statement in statements {
+                try statement.run(inContext: context, inScope: subscope)
+            }
+            
+            return .null
         case .dynamicFunctionCall(let name, let parameters):
             guard let function = context.functions[name] else {
                 throw ParserError.invalidFunction(name)
             }
             
-            return function(parameters)
+            var newParameters: ParameterList = [:]
+            
+            for parameter in parameters {
+                newParameters[parameter.key] = try parameter.value.run(inContext: context, inScope: scope)
+            }
+            
+            return try function(newParameters, scope)
         case .variable(let id):
-            return context.variables[id]
+            return scope[id]
         case .literal(_):
             return self
+        case .parameter(let name):
+            if let variable = scope.parameters[name] {
+                return try variable.run(inContext: context, inScope: scope)
+            }
+            
+            if let variable = context.variables[name] {
+                return try variable.run(inContext: context, inScope: scope)
+            }
+            
+            throw ParserError.invalidParameter(name)
         default:
-            fatalError("unimplemented")
+            fatalError("unimplemented null")
         }
         // Find the function
-        
     }
 }
 

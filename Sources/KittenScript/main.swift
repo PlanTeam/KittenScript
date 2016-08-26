@@ -9,8 +9,30 @@ var script: [UInt8] = [
 ]
 
 var variablesTest: [UInt8] = [
-    13, 0, 0, 0,
-    0x03, 0x05, 0x00, 0x00, 0x00, 0x03, 0x03, 0x01,
+    34, 0, 0, 0,
+    0x03, 0x05, 0x00, 0x00, 0x00, 0x02, 0x68 /*h*/, 0x65 /*e*/, 0x6c /*l*/, 0x6c /*l*/, 0x6f /*o*/, 0x00, 0x00,
+    0x04 /*plain expression*/, 0x02 /*dynamic function call*/, 0x68 /*h*/, 0x65 /*e*/, 0x6c /*l*/, 0x6c /*l*/, 0x6f /*o*/, 0x00, 0x69, 0x00, 0x04, 0x05, 0x00, 0x00, 0x00, 0x00,
+    0x00
+]
+
+var variablesTest2: [UInt8] = [
+    23, 0, 0, 0,
+    0x04 /*plain expression*/, 0x02 /*dynamic function call*/, 0x68 /*h*/, 0x65 /*e*/, 0x6c /*l*/, 0x6c /*l*/, 0x6f /*o*/, 0x00, 0x69, 0x00, 0x02, 0x68 /*h*/, 0x65 /*e*/, 0x6c /*l*/, 0x6c /*l*/, 0x6f /*o*/, 0x00, 0x00,
+    0x00
+]
+
+var functionsTest: [UInt8] = [
+    35, 0, 0, 0,
+    // var 4 = function() {
+    0x03, 0x04, 0x00, 0x00, 0x00, 0x03, 0x04,
+    // function Length
+    23, 0, 0, 0,
+    // hello()
+     0x04, 0x02, 0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x00, 0x69, 0x00, 0x02, 0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x00, 0x00,
+    // }
+    0x00,
+    // 4()
+    0x04, 0x01, 0x04, 0x00, 0x00, 0x00, 0x00,
     0x00
 ]
 
@@ -27,15 +49,21 @@ var script2 = try! compile(uncompiled)
 
 let runnableCode = Code()
 runnableCode.code = script
-runnableCode.context.functions["hello"] = { parameters in
+runnableCode.context.functions["hello"] = { parameters, scope in
     print(parameters)
+    print(scope.keys)
     print("hello")
-    return .null
+    
+    if case .literal(let variable) = parameters["i"] ?? .null {
+        print(variable)
+    }
+    
+    return Expression.literal(.double(3.14))
 }
-runnableCode.context.functions["whatsup"] = { parameters in
+
+runnableCode.context.functions["whatsup"] = { parameters, scope in
     print("OMG IT ASKED ME WHAT'S UP THIS IS SO EXCIIIIITING")
     return .null
-    
 }
 
 //try! runnableCode.run(inContext: [:])
@@ -44,7 +72,6 @@ runnableCode.context.functions["whatsup"] = { parameters in
 //
 //try! runnableCode.run(inContext: [:])
 //
-runnableCode.code = variablesTest
+runnableCode.code = functionsTest
 
-try! runnableCode.run(inContext: [:])
-print(runnableCode.context.variables)
+try! runnableCode.run(inScope: Scope())
