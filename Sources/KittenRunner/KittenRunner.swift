@@ -2,12 +2,7 @@ import Foundation
 import CommonKitten
 
 enum ParserError: Error {
-    case unsupportedLiteralType(UInt8)
-    case invalidCodeLength
-    case invalidExpression
-    case invalidStatement
-    case invalidFunction(String)
-    case invalidParameter(String)
+    case unhelpfulError
 }
 
 /// The Script's Running Context
@@ -80,20 +75,18 @@ public class Code {
     public init() {}
     
     /// Allows you to run the code within a given context
-    public func run(inScope scope: Scope) throws {
-        let length = Int(UnsafePointer<UInt32>(Array(code[0..<4])).pointee)
-        
-        guard code.count >= length else {
-            throw ParserError.invalidCodeLength
-        }
-        
+    public func run(inScope scope: Scope) throws -> Expression? {
         let statement = try makeStatement(atPosition: 0, withType: 0x02, inScope: scope)
         
         guard let s = statement.statement else {
-            throw ParserError.invalidStatement
+            throw ParserError.unhelpfulError
         }
         
-        try s.run(inContext: context, inScope: scope)
+        guard case .result(let expression) = try s.run(inContext: context, inScope: scope) else {
+            return nil
+        }
+        
+        return try expression.run(inContext: context, inScope: scope)
     }
     
     func makeStatement(atPosition position: Int, withType type: UInt8, inScope scope: Scope) throws -> (statement: Statement?, consumed: Int) {
@@ -108,8 +101,10 @@ public class Code {
             let expressionResult = try makeExpression(fromPosition: consumed, withType: type, inScope: scope)
             
             guard let expression = expressionResult.expression else {
-                throw ParserError.invalidExpression
+                throw ParserError.unhelpfulError
             }
+            
+            consumed += expressionResult.consumed
             
             let trueLength = Int(try UInt32.instantiate(bytes: Array(code[consumed..<consumed + 4])))
             
@@ -119,29 +114,43 @@ public class Code {
             
             consumed += 4
             
-            let trueStatementResponse = try makeStatement(atPosition: consumed, withType: type, inScope: scope)
+            let trueType = code[consumed]
+            consumed += 1
+            
+            let trueStatementResponse = try makeStatement(atPosition: consumed, withType: trueType, inScope: scope)
             
             guard let trueStatement = trueStatementResponse.statement else {
-                throw ParserError.invalidStatement
+                throw ParserError.unhelpfulError
             }
             
-            consumed += trueLength
+            // Don't subtract one, becuase we're including the type identifier
+            consumed += trueStatementResponse.consumed
             
             if falseLength == 0 {
                 return (Statement.ifStatement(expression: expression, trueStatement: trueStatement, falseStatement: nil), consumed - position)
             } else {
-                let falseStatementResponse = try makeStatement(atPosition: consumed, withType: type, inScope: scope)
+                let falseType = code[consumed]
+                consumed += 1
                 
-                consumed += falseLength
+                let falseStatementResponse = try makeStatement(atPosition: consumed, withType: falseType, inScope: scope)
+                
+                // Don't subtract one, becuase we're including the type identifier
+                consumed += falseStatementResponse.consumed
                 
                 return (Statement.ifStatement(expression: expression, trueStatement: trueStatement, falseStatement: falseStatementResponse.statement), consumed - position)
             }
         case 0x02:
             var statements = [Statement]()
             
+            let length = Int(UnsafePointer<UInt32>(Array(code[0..<4])).pointee)
+            
+            guard code.count >= length else {
+                throw ParserError.unhelpfulError
+            }
+            
             consumed += 4
             
-            while consumed < code.count && code[consumed] != 0x00 {
+            while consumed < length && code[consumed] != 0x00 {
                 let type = code[consumed]
                 consumed += 1
                 
@@ -150,11 +159,17 @@ public class Code {
                 consumed += statementResponse.consumed
                 
                 guard let statement = statementResponse.statement else {
-                    throw ParserError.invalidStatement
+                    throw ParserError.unhelpfulError
                 }
                 
                 statements.append(statement)
             }
+            
+            guard code[consumed] == 0x00 else {
+                throw ParserError.unhelpfulError
+            }
+            
+            consumed += 1
             
             return (Statement.script(statements), consumed - position)
         case 0x03:
@@ -169,7 +184,7 @@ public class Code {
             let expressionResult = try makeExpression(fromPosition: consumed, withType: type, inScope: scope)
             
             guard let expression = expressionResult.expression else {
-                throw ParserError.invalidExpression
+                throw ParserError.unhelpfulError
             }
             
             consumed += expressionResult.consumed
@@ -183,10 +198,8 @@ public class Code {
             let expressionResult = try makeExpression(fromPosition: consumed, withType: expressionType, inScope: scope)
             
             guard let expression = expressionResult.expression else {
-                throw ParserError.invalidExpression
+                throw ParserError.unhelpfulError
             }
-            
-            print("Return value: \(expression)")
             
             consumed += expressionResult.consumed
             
@@ -273,6 +286,17 @@ public class Code {
             }
             
             return (.parameter(keyString), consumed - position)
+        case 0x06:
+            var consumed = position
+            let type = code[consumed]
+            
+            consumed += 1
+            
+            let expressionResponse = try makeExpression(fromPosition: consumed, withType: type, inScope: scope)
+            
+            consumed += expressionResponse.consumed
+            
+            return (.result(expressionResponse.expression ?? .null), consumed - position)
         default:
             return (nil, 0)
         }
@@ -289,7 +313,7 @@ public class Code {
             consumed += 4
             
             guard position + Int(textLength) < code.count else {
-                throw DeserializationError.InvalidElementSize
+                throw ParserError.unhelpfulError
             }
             
             var keyPos = 0
@@ -302,7 +326,7 @@ public class Code {
             consumed += keyPos
             
             guard let string = String(bytes: text, encoding: .utf8) else {
-                throw DeserializationError.InvalidElementContents
+                throw ParserError.unhelpfulError
             }
             
             return (.string(string), consumed - position)
@@ -324,14 +348,14 @@ public class Code {
             let statementResponse = try makeStatement(atPosition: consumed, withType: 0x02, inScope: subscope)
             
             guard let statement = statementResponse.statement, case .script(let statements) = statement else {
-                throw ParserError.invalidStatement
+                throw ParserError.unhelpfulError
             }
             
             consumed += statementResponse.consumed
             
             return (.script(statements), consumed - position)
         default:
-            throw ParserError.unsupportedLiteralType(type)
+            throw ParserError.unhelpfulError
         }
     }
     
@@ -380,68 +404,90 @@ public indirect enum Statement {
     case expression(Expression)
     case null
     
-    func run(inContext context: Context, inScope scope: Scope) throws {
+    func run(inContext context: Context, inScope scope: Scope) throws -> Expression {
         switch self {
         case .script(let statements):
             for statement in statements {
-                try statement.run(inContext: context, inScope: scope)
+                let expression = try statement.run(inContext: context, inScope: scope)
+                
+                if case .result(_) = expression {
+                    return expression
+                }
             }
+            return .null
         case .assignment(let id, let expression):
             scope[id] = try expression.run(inContext: context, inScope: scope)
+            return .null
         case .expression(let expression):
-            _ = try expression.run(inContext: context, inScope: scope)
-        case .ifStatement(let expression, let trueStatement, let falseStatement):
             let expression = try expression.run(inContext: context, inScope: scope)
             
-            guard case Expression.literal(let literal) = expression, case .boolean(let bool) = literal else {
-                throw ParserError.invalidExpression
+            if case .result(_) = expression {
+                return expression
+            }
+            
+            return .null
+        case .ifStatement(let expression, let trueStatement, let falseStatement):
+            let e = try expression.run(inContext: context, inScope: scope)
+            
+            guard case Expression.literal(let literal) = e, case .boolean(let bool) = literal else {
+                throw ParserError.unhelpfulError
             }
             
             let subscope = Scope(subscopeOf: scope)
             
             if bool {
-                try trueStatement.run(inContext: context, inScope: subscope)
+                let result = try trueStatement.run(inContext: context, inScope: subscope)
+                if case .result(_) = result {
+                    return result
+                }
                 
             } else if let falseStatement = falseStatement {
-                try falseStatement.run(inContext: context, inScope: subscope)
+                let result = try falseStatement.run(inContext: context, inScope: subscope)
+                if case .result(_) = result {
+                    return result
+                }
             }
+            return .null
         case .null:
-            break
+            return .null
         }
     }
 }
 
 public typealias ParameterList = [String: Expression]
 
-public enum Expression {
+public indirect enum Expression {
     case localFunctionCall(id: UInt32, parameterList: ParameterList)
     case dynamicFunctionCall(name: String, ParameterList: ParameterList)
     case literal(Literal)
     case variable(UInt32)
     case parameter(String)
+    case result(Expression)
     case null
     
     func run(inContext context: Context, inScope scope: Scope) throws -> Expression {
         switch self {
         case .localFunctionCall(let id, let parameterList):
             guard case .literal(let funcLiteral) = try scope[id].run(inContext: context, inScope: scope) else {
-                throw ParserError.invalidExpression
+                throw ParserError.unhelpfulError
             }
             
             guard case .script(let statements) = funcLiteral else {
-                throw ParserError.invalidExpression
+                throw ParserError.unhelpfulError
             }
             
             let subscope = Scope(subscopeOf: scope, parameters: parameterList)
             
             for statement in statements {
-                try statement.run(inContext: context, inScope: subscope)
+                if case .result(let result) = try statement.run(inContext: context, inScope: subscope) {
+                    return result
+                }
             }
             
             return .null
         case .dynamicFunctionCall(let name, let parameters):
             guard let function = context.functions[name] else {
-                throw ParserError.invalidFunction(name)
+                throw ParserError.unhelpfulError
             }
             
             var newParameters: ParameterList = [:]
@@ -464,9 +510,11 @@ public enum Expression {
                 return try variable.run(inContext: context, inScope: scope)
             }
             
-            throw ParserError.invalidParameter(name)
+            throw ParserError.unhelpfulError
+        case .result(_):
+            return self
         default:
-            fatalError("unimplemented null")
+            return .null
         }
         // Find the function
     }
