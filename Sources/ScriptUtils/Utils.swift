@@ -31,3 +31,21 @@ public protocol Parser {
     func parseExpression(_ code: String) throws -> Expression
     func parseLiteral(_ code: String) throws -> Literal
 }
+
+extension Literal: Equatable {
+    public static func ==(lhs: Literal, rhs: Literal) -> Bool {
+        if case .string(let s0) = lhs, case .string(let s1) = rhs {
+            return s0 == s1
+        }
+        
+        if case .double(let d0) = lhs, case .double(let d1) = rhs {
+            return d0 == d1
+        }
+        
+        if case .boolean(let b0) = lhs, case .boolean(let b1) = rhs {
+            return b0 == b1
+        }
+        
+        return false
+    }
+}

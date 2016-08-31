@@ -1,4 +1,4 @@
-import ScriptUtils
+/*import ScriptUtils
 
 
 
@@ -14,3 +14,4 @@ func parseExpression(_ code: String) throws -> Expression {
 func parseLiteral(_ code: String) throws -> Literal {
     throw ParserError.unhelpfulError
 }
+*/

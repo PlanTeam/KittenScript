@@ -6,11 +6,11 @@ enum ParserError: Error {
     case unhelpfulError
 }
 
+public typealias NativeFunction = ((ParameterList, Scope, Context) throws -> (Expression))
+
 /// The Script's Running Context
 public class Context {
     /// A natively implemented function that's exposed in the Context
-    public typealias NativeFunction = ((ParameterList, Scope) throws -> (Expression))
-    
     public var functions = [String: NativeFunction]()
     public var variables = [String: Expression]()
 }
@@ -77,7 +77,11 @@ public class Code {
     
     /// Allows you to run the code within a given context
     public func run(inScope scope: Scope) throws -> Expression? {
-        let statement = try makeStatement(atPosition: 0, withType: 0x02, inScope: scope)
+        guard code[0] == 0x02 else {
+            throw ParserError.unhelpfulError
+        }
+        
+        let statement = try makeStatement(atPosition: 1, withType: 0x02, inScope: scope)
         
         guard let s = statement.statement else {
             throw ParserError.unhelpfulError
@@ -143,7 +147,7 @@ public class Code {
         case 0x02:
             var statements = [Statement]()
             
-            let length = Int(UnsafePointer<UInt32>(Array(code[0..<4])).pointee)
+            let length = Int(UnsafePointer<UInt32>(Array(code[consumed..<consumed+4])).pointee)
             
             guard code.count >= length else {
                 throw ParserError.unhelpfulError
@@ -151,7 +155,7 @@ public class Code {
             
             consumed += 4
             
-            while consumed < length && code[consumed] != 0x00 {
+            while consumed < length + position && code[consumed] != 0x00 {
                 let type = code[consumed]
                 consumed += 1
                 
@@ -397,7 +401,7 @@ public class Code {
 }
 
 extension Statement {
-    func run(inContext context: Context, inScope scope: Scope) throws -> Expression {
+    public func run(inContext context: Context, inScope scope: Scope) throws -> Expression {
         switch self {
         case .script(let statements):
             for statement in statements {
@@ -448,7 +452,7 @@ extension Statement {
 }
 
 extension Expression {
-    func run(inContext context: Context, inScope scope: Scope) throws -> Expression {
+    public func run(inContext context: Context, inScope scope: Scope) throws -> Expression {
         switch self {
         case .localFunctionCall(let id, let parameterList):
             guard case .literal(let funcLiteral) = try scope[id].run(inContext: context, inScope: scope) else {
@@ -479,7 +483,7 @@ extension Expression {
                 newParameters[parameter.key] = try parameter.value.run(inContext: context, inScope: scope)
             }
             
-            return try function(newParameters, scope)
+            return try function(newParameters, scope, context)
         case .variable(let id):
             return scope[id]
         case .literal(_):

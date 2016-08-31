@@ -15,7 +15,7 @@ public typealias ParameterList = [String: Expression]
 public typealias Script = [Statement]
 
 extension Statement {
-    func compile() -> [UInt8] {
+    public func compile() -> [UInt8] {
         switch self {
         case .ifStatement(let expression, let trueStatement, let falseStatement):
             let trueStatement = trueStatement.compile()
@@ -52,12 +52,12 @@ func compileParameters(_ parameters: ParameterList) -> [UInt8] {
 }
 
 extension Expression {
-    func compile() -> [UInt8] {
+    public func compile() -> [UInt8] {
         switch self {
         case .localFunctionCall(let function, let parameters):
             return [0x01] + function.bytes + compileParameters(parameters)
         case .dynamicFunctionCall(let name, let parameters):
-            return [0x02] + name.utf8 + compileParameters(parameters)
+            return [0x02] + name.utf8 + [0x00] + compileParameters(parameters)
         case .literal(let literal):
             return [0x03] + literal.compile()
         case .variable(let id):
@@ -73,7 +73,7 @@ extension Expression {
 }
 
 extension Literal {
-    func compile() -> [UInt8] {
+    public func compile() -> [UInt8] {
         switch self {
         case .string(let s):
             return [0x01] + UInt32(s.utf8.count).bytes + [UInt8](s.utf8)
