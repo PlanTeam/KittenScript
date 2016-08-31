@@ -1,4 +1,5 @@
 import CommonKitten
+@_exported import ScriptUtils
 
 public struct Definition {
     public var postfixOperators: [String: PostfixOperator]
@@ -13,13 +14,7 @@ public typealias PrefixOperator = ((rhs: Expression)->Expression)
 public typealias ParameterList = [String: Expression]
 public typealias Script = [Statement]
 
-public indirect enum Statement {
-    case ifStatement(expression: Expression, trueStatement: Statement, falseStatement: Statement?)
-    case script(Script)
-    case assignment(id: UInt32, to: Expression)
-    case expression(Expression)
-    case null
-    
+extension Statement {
     func compile() -> [UInt8] {
         switch self {
         case .ifStatement(let expression, let trueStatement, let falseStatement):
@@ -56,15 +51,7 @@ func compileParameters(_ parameters: ParameterList) -> [UInt8] {
     return parameterCode + [0x00]
 }
 
-public indirect enum Expression {
-    case localFunctionCall(id: UInt32, parameterList: ParameterList)
-    case dynamicFunctionCall(name: String, ParameterList: ParameterList)
-    case literal(Literal)
-    case variable(UInt32)
-    case parameter(String)
-    case result(Expression)
-    case null
-    
+extension Expression {
     func compile() -> [UInt8] {
         switch self {
         case .localFunctionCall(let function, let parameters):
@@ -85,12 +72,7 @@ public indirect enum Expression {
     }
 }
 
-public enum Literal {
-    case string(String)
-    case double(Double)
-    case boolean(Bool)
-    case script(Script)
-    
+extension Literal {
     func compile() -> [UInt8] {
         switch self {
         case .string(let s):
@@ -138,4 +120,3 @@ class Interpreter {
         self.definition = definition
     }
 }
-

@@ -1,5 +1,6 @@
 import Foundation
 import CommonKitten
+@_exported import ScriptUtils
 
 enum ParserError: Error {
     case unhelpfulError
@@ -395,15 +396,7 @@ public class Code {
     }
 }
 
-public typealias Script = [Statement]
-
-public indirect enum Statement {
-    case ifStatement(expression: Expression, trueStatement: Statement, falseStatement: Statement?)
-    case script(Script)
-    case assignment(id: UInt32, to: Expression)
-    case expression(Expression)
-    case null
-    
+extension Statement {
     func run(inContext context: Context, inScope scope: Scope) throws -> Expression {
         switch self {
         case .script(let statements):
@@ -454,17 +447,7 @@ public indirect enum Statement {
     }
 }
 
-public typealias ParameterList = [String: Expression]
-
-public indirect enum Expression {
-    case localFunctionCall(id: UInt32, parameterList: ParameterList)
-    case dynamicFunctionCall(name: String, ParameterList: ParameterList)
-    case literal(Literal)
-    case variable(UInt32)
-    case parameter(String)
-    case result(Expression)
-    case null
-    
+extension Expression {
     func run(inContext context: Context, inScope scope: Scope) throws -> Expression {
         switch self {
         case .localFunctionCall(let id, let parameterList):
@@ -518,11 +501,4 @@ public indirect enum Expression {
         }
         // Find the function
     }
-}
-
-public enum Literal {
-    case string(String)
-    case double(Double)
-    case boolean(Bool)
-    case script(Script)
 }

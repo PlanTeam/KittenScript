@@ -1,3 +1,4 @@
+import KittenParser
 import KittenRunner
 import KittenCompiler
 
