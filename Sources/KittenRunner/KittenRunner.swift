@@ -111,11 +111,12 @@ public class Code {
             
             consumed += expressionResult.consumed
             
-            let trueLength = Int(try UInt32.instantiate(bytes: Array(code[consumed..<consumed + 4])))
+            // TODO: USE THIS! It's faster.
+            // let trueLength = Int(try fromBytes(code[consumed..<consumed + 4]) as UInt32)
             
             consumed += 4
             
-            let falseLength = Int(try UInt32.instantiate(bytes: Array(code[consumed..<consumed + 4])))
+            let falseLength = Int(try fromBytes(code[consumed..<consumed + 4]) as UInt32)
             
             consumed += 4
             
@@ -147,7 +148,7 @@ public class Code {
         case 0x02:
             var statements = [Statement]()
             
-            let length = Int(UnsafePointer<UInt32>(Array(code[consumed..<consumed+4])).pointee)
+            let length = Int(try fromBytes(code[consumed..<consumed + 4]) as UInt32)
             
             guard code.count >= length else {
                 throw ParserError.unhelpfulError
@@ -178,7 +179,7 @@ public class Code {
             
             return (Statement.script(statements), consumed - position)
         case 0x03:
-            let varID = try UInt32.instantiate(bytes: Array(code[position..<position + 4]))
+            let varID = try fromBytes(code[consumed..<consumed + 4]) as UInt32
             
             consumed += 4
             
@@ -219,7 +220,7 @@ public class Code {
         case 0x01:
             var consumed = position
             
-            let variableID = UnsafePointer<UInt32>(Array(code[consumed..<consumed + 4])).pointee
+            let variableID = try fromBytes(code[consumed..<consumed + 4]) as UInt32
             
             consumed += 4
             
@@ -268,7 +269,7 @@ public class Code {
             
             return (.literal(literalResponse.literal), consumed - position)
         case 0x04:
-            let d = UnsafePointer<UInt32>(Array(code[position..<position + 4])).pointee
+            let d = try fromBytes(code[position..<position + 4]) as UInt32
             
             return (.variable(d), 4)
         case 0x05:
@@ -313,7 +314,7 @@ public class Code {
         switch type {
         case 0x01:
             var text = [UInt8]()
-            let textLength = try UInt32.instantiate(bytes: Array(code[consumed..<consumed + 4]))
+            let textLength = try fromBytes(code[consumed..<consumed + 4]) as UInt32
             
             consumed += 4
             

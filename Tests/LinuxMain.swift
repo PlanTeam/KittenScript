@@ -1,5 +1,5 @@
 import XCTest
-@testable import KittenScriptTestSuite
+@testable import KittenScriptTests
 
 XCTMain([
      testCase(KittenScriptTests.allTests),

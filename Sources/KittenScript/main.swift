@@ -19,10 +19,6 @@ var script: [KittenCompiler.Statement] = [
     ]
 
 //var uncompiled = "hello()\nwhatsup(    )    hello() hello() whatsup() hello()"
-let uncompiled = "hello     ( )      hello            ()     whatsup(    )hello()hello()hello()hello()"
-
-var script2 = try! compile(uncompiled)
-
 //var script: [UInt8] = [
 //    14,0,0,0, // undefined length now
 //    0x04 /*plain expression*/, 0x02 /*dynamic function call*/, 0x68 /*h*/, 0x65 /*e*/, 0x6c /*l*/, 0x6c /*l*/, 0x6f /*o*/, 0x00, 0x00 /*empty parameter list*/,
@@ -31,7 +27,7 @@ var script2 = try! compile(uncompiled)
 
 let runnableCode = Code()
 //runnableCode.code = script
-runnableCode.context.functions["hello"] = { parameters, scope in
+runnableCode.context.functions["hello"] = { parameters, scope, _ in
     print(parameters)
     print(scope.keys)
     print("hello")
@@ -43,7 +39,7 @@ runnableCode.context.functions["hello"] = { parameters, scope in
     return Expression.literal(.double(3.14))
 }
 
-runnableCode.context.functions["whatsup"] = { parameters, scope in
+runnableCode.context.functions["whatsup"] = { _, _, _ in
     print("OMG IT ASKED ME WHAT'S UP THIS IS SO EXCIIIIITING")
     return .null
 }

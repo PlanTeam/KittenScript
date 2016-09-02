@@ -7,9 +7,9 @@ public struct Definition {
     public var prefixOperators: [String: PrefixOperator]
 }
 
-public typealias PostfixOperator = ((lhs: Expression)->Expression)
-public typealias InfixOperator = ((lhs: Expression, rhs: Expression)->Expression)
-public typealias PrefixOperator = ((rhs: Expression)->Expression)
+public typealias PostfixOperator = ((Expression)->Expression)
+public typealias InfixOperator = ((Expression, Expression)->Expression)
+public typealias PrefixOperator = ((Expression)->Expression)
 
 public typealias ParameterList = [String: Expression]
 public typealias Script = [Statement]
@@ -77,10 +77,8 @@ extension Literal {
         switch self {
         case .string(let s):
             return [0x01] + UInt32(s.utf8.count).bytes + [UInt8](s.utf8)
-        case .double(var d):
-            return [0x02] + withUnsafePointer(&d) {
-                return Array(UnsafeBufferPointer(start: UnsafePointer<UInt8>($0), count: sizeof(Double.self)))
-            }
+        case .double(let d):
+            return [0x02] + d.bytes
         case .boolean(let bool):
             return [0x03] + (bool ? [0x01] : [0x00])
         case .script(let statements):
