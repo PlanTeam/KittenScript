@@ -4,21 +4,35 @@ public func compile(_ s: String) {
     
 }
 
-public func run(code: [UInt8], withParameters: [String: [UInt8]] = [:]) -> [UInt8]? {
+public typealias DynamicFunction = (([String: [UInt8]])->[UInt8])
+
+public enum RuntimeError: Error {
+    case unexpectedEndOfScript(remaining: Int, required: Int)
+}
+
+/// Runs the bitcode
+///
+/// The parameters are cString named parameters that contai a KittenScript literal
+/// The context is the variable scope. It contains all stored variables as [id: literal].
+/// The dynamicFunctions are the registered callbacks to Swift which are named with a cString.
+///
+/// This function can return a KittenScript Literal that needs to be parsed afterwards
+public func run(code: [UInt8], withParameters: [String: [UInt8]] = [:], inContext context: [UInt32: [UInt8]] = [:], dynamicFunctions: [String: DynamicFunction] = [:]) -> [UInt8]? {
     var position = 0
     var val: [UInt8]? = nil
-    var context = [UInt32: [UInt8]]()
+    var context = context
     var parameters = [String: [UInt8]]()
     
-    func makeCodeRange(_ n: Int) -> ArraySlice<UInt8> {
+    /// Helper function that creates an ArraySlice of required amount of bytes from the current position
+    func makeCodeRange(_ n: Int) throws -> ArraySlice<UInt8> {
         guard remaining() >= n else {
-            fatalError("Not enough remaining bytes")
+            throw RuntimeError.unexpectedEndOfScript(remaining: remaining(), required: n)
         }
         
         return code[position..<position + n]
     }
     
-    func makeCString() -> String {
+    func makeCString() throws -> String {
         var stringBytes = [UInt8]()
         
         stringBuilder: while position < code.count {
@@ -33,27 +47,20 @@ public func run(code: [UInt8], withParameters: [String: [UInt8]] = [:]) -> [UInt
             }
         }
         
-        guard let string = try? String.instantiateFromCString(bytes: stringBytes) else {
-            fatalError("Invalid CString")
-        }
-        
-        return string
+        return try String.instantiateFromCString(bytes: stringBytes)
     }
     
-    func makeParameters() -> [String: [UInt8]] {
+    func makeParameters(fromData code: [UInt8] = code, position: inout Int) -> [String: [UInt8]] {
         var parameters = [String: [UInt8]]()
         
         while position < code.count {
-            defer {
-                position += 1
-            }
-            
             if code[position] == 0x00 {
+                position += 1
                 return parameters
             }
             
             let parameterName = makeCString()
-            let expression = makeExpression()
+            let expression = makeExpression(fromData: code, position: &position)
             
             parameters[parameterName] = expression
         }
@@ -61,11 +68,13 @@ public func run(code: [UInt8], withParameters: [String: [UInt8]] = [:]) -> [UInt
         return parameters
     }
     
-    func makeLiteral() -> [UInt8] {
+    func makeLiteral(fromData code: [UInt8] = code, position: inout Int) -> [UInt8] {
         let variableType = code[position]
         position += 1
         
         switch variableType {
+        case 0x00:
+            return [0x00]
         case 0x01:
             let length = Int(try! fromBytes(makeCodeRange(4)) as UInt32)
             
@@ -89,28 +98,14 @@ public func run(code: [UInt8], withParameters: [String: [UInt8]] = [:]) -> [UInt
         case 0x04:
             let length = Int(try! fromBytes(makeCodeRange(4)) as UInt32)
             
-            var oldPosition = position
+            defer { position += length }
             
-            position += 4
-            
-            scriptLoop: while position < code.count {
-                position += 1
-                
-                if code[position] == 0x00 {
-                    break scriptLoop
-                }
-            }
-            
-            defer {
-                position += 1
-            }
-            
-            return [variableType] + Array(code[oldPosition..<position])
+            return [variableType] + Array(code[position..<position + length])
         case 0x05:
             var literals = [UInt8]()
             
             while code[position] != 0x00 {
-                literals.append(contentsOf: makeLiteral())
+                literals.append(contentsOf: makeExpression(fromData: code, position: &position))
             }
             
             position += 1
@@ -120,7 +115,7 @@ public func run(code: [UInt8], withParameters: [String: [UInt8]] = [:]) -> [UInt
         }
     }
     
-    func makeExpression() -> [UInt8] {
+    func makeExpression(fromData code: [UInt8] = code, position: inout Int) -> [UInt8] {
         let expressionType = code[position]
         position += 1
         
@@ -131,29 +126,23 @@ public func run(code: [UInt8], withParameters: [String: [UInt8]] = [:]) -> [UInt
                 fatalError("Non-existing variable")
             }
             
+            position += 4
+            
             guard variable.count > 0, variable.removeFirst() == 0x04 else {
                 fatalError("Invalid variable type being executed")
             }
             
-            let parameters = makeParameters()
+            let parameters = makeParameters(fromData: code, position: &position)
             
-            return run(code: variable, withParameters: parameters) ?? [0x00]
+            return run(code: variable, withParameters: parameters, dynamicFunctions: dynamicFunctions) ?? [0x00]
         case 0x02:
             let parameterName = makeCString()
             
-            guard var variable = parameters[parameterName] else {
-                fatalError("Non-existing parameter")
-            }
+            let parameters = makeParameters(fromData: code, position: &position)
             
-            guard variable.count > 0, variable.removeFirst() == 0x04 else {
-                fatalError("Invalid variable type being executed")
-            }
-            
-            let parameters = makeParameters()
-            
-            return run(code: variable, withParameters: parameters) ?? [0x00]
+            return dynamicFunctions[parameterName]!(parameters)
         case 0x03:
-            return makeLiteral()
+            return makeLiteral(fromData: code, position: &position)
         case 0x04:
             defer {
                 position += 4
@@ -182,44 +171,14 @@ public func run(code: [UInt8], withParameters: [String: [UInt8]] = [:]) -> [UInt
         var arrayPosition = 0
         var literals = [[UInt8]]()
         
+        guard expression.count >= 2, expression[arrayPosition] == 0x05 else {
+            fatalError("Invalid array")
+        }
+        
+        arrayPosition += 1
+        
         while arrayPosition < expression.count, expression[arrayPosition] != 0x00 {
-            let literalType = expression[arrayPosition]
-            
-            arrayPosition += 1
-            
-            switch literalType {
-            case 0x01:
-                let stringLength = Int(try! fromBytes(makeCodeRange(4)) as UInt32)
-                defer { arrayPosition += 4 }
-                
-                guard stringLength < expression.count - arrayPosition else {
-                    fatalError("Invalid remaining bytes")
-                }
-                
-                literals.append([literalType] + Array(expression[arrayPosition + 4..<arrayPosition + 4 + stringLength]))
-            case 0x02:
-                guard arrayPosition + 8 < expression.count else {
-                    fatalError("Invalid remaining bytes")
-                }
-                
-                defer { arrayPosition += 8 }
-                
-                literals.append([literalType] + Array(expression[arrayPosition..<arrayPosition + 8]))
-            case 0x03:
-                guard expression[arrayPosition] == 0x00 || expression[arrayPosition] == 0x01 else {
-                    fatalError("Invalid boolean case")
-                }
-                
-                defer { arrayPosition += 1 }
-                
-                literals.append([literalType, expression[arrayPosition]])
-            case 0x04:
-                fatalError("Unsupported in array -- for now")
-            case 0x05:
-                return makeLiteralArray(<#T##expression: [UInt8]##[UInt8]#>)
-            default:
-                fatalError("Unsupported literal type")
-            }
+            literals.append(makeLiteral(fromData: expression, position: &arrayPosition))
         }
         
         return literals
@@ -231,7 +190,7 @@ public func run(code: [UInt8], withParameters: [String: [UInt8]] = [:]) -> [UInt
         
         switch statementType {
         case 0x01:
-            let expression = makeExpression()
+            let expression = makeExpression(fromData: code, position: &position)
             
             guard expression.count == 2, expression[0] == 0x03 else {
                 fatalError("Not a boolean in if-statement")
@@ -250,7 +209,7 @@ public func run(code: [UInt8], withParameters: [String: [UInt8]] = [:]) -> [UInt
             position += 4
             
             guard remaining(trueStatementLength + falseStatementLength) else {
-                fatalError("Unexpected end of script")
+                fatalError("Unexpected end of block")
             }
             
             guard expression[0] == 0x03 else {
@@ -264,9 +223,11 @@ public func run(code: [UInt8], withParameters: [String: [UInt8]] = [:]) -> [UInt
             } else if expression[1] == 0x00 {
                 position += trueStatementLength
                 
-                val = makeStatement()
+                defer {
+                    position += falseStatementLength
+                }
                 
-                position += falseStatementLength
+                return makeStatement()
             } else {
                 fatalError("Impossible boolean")
             }
@@ -274,23 +235,31 @@ public func run(code: [UInt8], withParameters: [String: [UInt8]] = [:]) -> [UInt
             let variableId = try! fromBytes(makeCodeRange(4)) as UInt32
             position += 4
             
-            let expression = makeExpression()
+            let expression = makeExpression(fromData: code, position: &position)
             
-            let scriptLength = Int(try! fromBytes(makeCodeRange(4)) as UInt32)
+            var script = makeExpression(fromData: code, position: &position)
+            
+            guard script.count >= 5, script.removeFirst() == 0x04 else {
+                fatalError("Invalid script")
+            }
             
             for literal in makeLiteralArray(expression) {
-                
+                if let response = run(code: script, withParameters: [:], inContext: [variableId: literal], dynamicFunctions: dynamicFunctions) {
+                    return response
+                }
             }
         case 0x03:
             let variableId = try! fromBytes(makeCodeRange(4)) as UInt32
             
             position += 4
             
-            context[variableId] = makeExpression()
+            let expression = makeExpression(fromData: code, position: &position)
+            
+            context[variableId] = expression
         case 0x04:
-            _ = makeExpression()
+            _ = makeExpression(fromData: code, position: &position)
         case 0x05:
-            return makeExpression()
+            return makeExpression(fromData: code, position: &position)
         default: fatalError("Invalid Statement Type")
         }
         
@@ -302,7 +271,7 @@ public func run(code: [UInt8], withParameters: [String: [UInt8]] = [:]) -> [UInt
     }
     
     func remaining(_ n: Int) -> Bool {
-        return remaining() > n
+        return remaining() >= n
     }
     
     guard code.count == Int(try! fromBytes(makeCodeRange(4)) as UInt32) else {
@@ -312,10 +281,6 @@ public func run(code: [UInt8], withParameters: [String: [UInt8]] = [:]) -> [UInt
     position += 4
     
     while position < code.count {
-        defer {
-            position += 1
-        }
-        
         if code[position] == 0x00 {
             return val
         }
