@@ -38,6 +38,14 @@ public struct KittenScriptValue: ExpressibleByBooleanLiteral, ExpressibleByStrin
         self.binary = binary
     }
     
+    public var stringValue: String? {
+        guard self.binary.count >= 5, self.binary[0] == 0x01 else {
+            return nil
+        }
+        
+        return String(bytes: self.binary[5..<self.binary.count], encoding: .utf8)
+    }
+    
     public var value: Any? {
         switch self.binary[0] {
         case 0x00:
@@ -58,7 +66,7 @@ public struct KittenScriptValue: ExpressibleByBooleanLiteral, ExpressibleByStrin
     }
 }
 
-public typealias DynamicFunction = (([String: KittenScriptValue])->KittenScriptValue)
+public typealias DynamicFunction = (([String: KittenScriptValue]) throws -> KittenScriptValue)
 
 public struct KittenScriptCode {
     var bytes: [UInt8]
@@ -255,26 +263,22 @@ func makeExpression(context: RuntimeContext) throws -> KittenScriptValue {
     switch expressionType {
     // Local function call to variableId
     case 0x01:
-        let variableId: UInt32 = try fromBytes(context.code[context.position..<context.position + 4])
-        guard var variable = context.context[variableId] else {
-            throw RuntimeError.invalidVariable(variableId)
-        }
+        var code = try makeExpression(context: context).binary
         
-        context.position += 4
-        
-        guard variable.count > 0 else {
-            throw RuntimeError.unexpectedEndOfScript(remaining: 0, required: 1)
-        }
-        
-        let type = variable.removeFirst()
+        let type = code.removeFirst()
         
         guard type == 0x04 else {
             throw RuntimeError.invalidVariableType(found: type, expected: 0x04)
         }
         
-        let parameters = try makeParameters(context: context)
+        var parameters = context.parameters
+        for (key, value) in try makeParameters(context: context) {
+            parameters[key] = value
+        }
         
-        return try KittenScriptRuntime.run(context: context)
+        let subcontext = RuntimeContext(code: code, withParameters: parameters, inContext: context.context, dynamicFunctions: context.dynamicFunctions)
+        
+        return try KittenScriptRuntime.run(context: subcontext)
     // Function call to registered native Swift closure
     case 0x02:
         let parameterName = try makeCString(context: context)
@@ -285,7 +289,7 @@ func makeExpression(context: RuntimeContext) throws -> KittenScriptValue {
             throw RuntimeError.invalidDynamicFunction(named: parameterName)
         }
         
-        return dynamicFunc(parameters)
+        return try dynamicFunc(parameters)
     // Literal
     case 0x03:
         return try makeLiteral(context: context)

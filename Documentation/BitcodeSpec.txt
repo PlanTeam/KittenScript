@@ -6,7 +6,7 @@ statement   ::= "\x01" expression true_statement_len false_statement_len true_st
               | "\x04" expression       Plain expression, result is thrown away
               | "\x05" expression       Return expression result
  
-expression  ::= "\x01" var_id parameter_list          Local function call
+expression  ::= "\x01" expression parameter_list          Local function call
               | "\x02" cstring parameter_list         Dynamic function call
               | "\x03" literal                        Literal value
               | "\x04" var_id                         Variable read

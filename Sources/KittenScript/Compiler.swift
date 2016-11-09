@@ -1,5 +1,13 @@
 import Foundation
 
+public enum CompilerError: Error {
+    case invalidExpression, noParameterNameProvided
+    case invalidCharacter(found: UInt8, expected: UInt8)
+    case unexpectedCharacters(expected: [UInt8])
+    case missingCharacter(expected: UInt8)
+    case cannotLoadFile(atPath: String)
+}
+
 public class KittenScriptCompiler {
     enum Word: String {
         case `if`, `else`, `return`, `for`, `in`
@@ -37,17 +45,17 @@ public class KittenScriptCompiler {
         ($0.makeBytes(), $0)
     }
     
-    public static func compile(atPath path: String) -> KittenScriptCode {
+    public static func compile(atPath path: String) throws -> KittenScriptCode {
         guard let data = NSData(contentsOfFile: path) else {
-            fatalError("Error loading file at \(path)")
+            throw CompilerError.cannotLoadFile(atPath: path)
         }
         var bytes = [UInt8](repeating: 0, count: data.length)
         data.getBytes(&bytes, length: bytes.count)
         
-        return KittenScriptCode(compile(bytes))
+        return KittenScriptCode(try compile(bytes))
     }
     
-    static func compile(_ code: [UInt8]) -> [UInt8] {
+    static func compile(_ code: [UInt8]) throws -> [UInt8] {
         var position = 0
         
         let whitespace: [UInt8] = [0x20, 0x0a]
@@ -73,7 +81,7 @@ public class KittenScriptCompiler {
             return wordBuffer
         }
         
-        func findWord(_ findCode: [UInt8]) {
+        func findWord(_ findCode: [UInt8]) throws {
             skipWhitespace()
             
             var codePosition = 0
@@ -85,14 +93,14 @@ public class KittenScriptCompiler {
                 }
                 
                 guard findCode[codePosition] == code[position] else {
-                    fatalError("Invalid code. Looking for \(findCode)")
+                    throw CompilerError.unexpectedCharacters(expected: findCode)
                 }
             }
         }
         
-        func compileArrayLiteral() -> [UInt8] {
+        func compileArrayLiteral() throws -> [UInt8] {
             guard code[position] == SpecialCharacters.arrayBlockOpen.rawValue else {
-                fatalError("Invalid character \(code[position]), expected `[`")
+                throw CompilerError.invalidCharacter(found: code[position], expected: SpecialCharacters.arrayBlockOpen.rawValue)
             }
             
             position += 1
@@ -105,7 +113,7 @@ public class KittenScriptCompiler {
             
             while position < code.count {
                 skipWhitespace()
-                let expression = compileExpression()
+                let expression = try compileExpression()
                 array.append(contentsOf: expression)
                 
                 skipWhitespace()
@@ -113,7 +121,7 @@ public class KittenScriptCompiler {
                 if code[position] == SpecialCharacters.arrayBlockClose.rawValue {
                     return [0x05] + array + [0x00]
                 } else if code[position] != SpecialCharacters.comma.rawValue {
-                    fatalError("Unexpected character \(code[position]), expected `]`")
+                    throw CompilerError.invalidCharacter(found: code[position], expected: SpecialCharacters.comma.rawValue)
                 }
                 
                 position += 1
@@ -121,12 +129,12 @@ public class KittenScriptCompiler {
                 skipWhitespace()
             }
             
-            fatalError("Unclosed array block. Missing `]`")
+            throw CompilerError.missingCharacter(expected: SpecialCharacters.arrayBlockClose.rawValue)
         }
         
-        func compileStringLiteral() -> [UInt8] {
+        func compileStringLiteral() throws -> [UInt8] {
             guard code[position] == SpecialCharacters.stringLiteralQuote.rawValue else {
-                fatalError("Invalid character \(code[position]), expected `\"`")
+                throw CompilerError.invalidCharacter(found: code[position], expected: SpecialCharacters.stringLiteralQuote.rawValue)
             }
             
             position += 1
@@ -146,32 +154,34 @@ public class KittenScriptCompiler {
                 position += 1
             }
             
-            fatalError("Unclosed String literal. Missing `\"`")
+            throw CompilerError.missingCharacter(expected: SpecialCharacters.stringLiteralQuote.rawValue)
         }
         
-        func compileLiteral() -> [UInt8]? {
+        func compileLiteral() throws -> [UInt8]? {
             if code[position] == SpecialCharacters.arrayBlockOpen.rawValue {
-                return compileArrayLiteral()
+                return try compileArrayLiteral()
             }
             
             if code[position] == SpecialCharacters.stringLiteralQuote.rawValue {
-                return compileStringLiteral()
+                return try compileStringLiteral()
             }
             
-            if scanWord("true") {
+            if try scanWord("true") {
                 return [0x03, 0x01]
-            } else if scanWord("false") {
+            } else if try scanWord("false") {
                 return [0x03, 0x00]
+            } else if try scanWord("nil") {
+                return [0x00]
             }
             
             return nil
         }
         
-        func scanWord(_ word: String) -> Bool {
-            return scanBytes([UInt8](word.utf8))
+        func scanWord(_ word: String) throws -> Bool {
+            return try scanBytes([UInt8](word.utf8))
         }
         
-        func scanBytes(_ bytes: [UInt8]) -> Bool {
+        func scanBytes(_ bytes: [UInt8]) throws -> Bool {
             var scanPosition = 0
             
             for byte in bytes {
@@ -186,13 +196,13 @@ public class KittenScriptCompiler {
             return true
         }
         
-        func scanScope(_ scope: String) -> Bool {
-            if !scanWord(scope) {
+        func scanScope(_ scope: String) throws -> Bool {
+            if try !scanWord(scope) {
                 return false
             }
             
             guard code[position] == SpecialCharacters.dot.rawValue else {
-                fatalError("Unexpected character \(code[position]) after `Parameters` scope entry")
+                throw CompilerError.invalidCharacter(found: code[position], expected: SpecialCharacters.dot.rawValue)
             }
             
             position += 1
@@ -200,46 +210,46 @@ public class KittenScriptCompiler {
             return true
         }
         
-        func makeParameter() -> [UInt8]? {
-            guard scanScope("Parameters") else {
+        func makeParameter() throws -> [UInt8]? {
+            guard try scanScope("Parameters") else {
                 return nil
             }
             
             let word = makeWord() + [0x00]
             
             guard word.count > 0 else {
-                fatalError("No parametername provided after `Parameter.` scope entry")
+                throw CompilerError.noParameterNameProvided
             }
             
             return word
         }
         
-        func compileExpression() -> [UInt8] {
+        func compileExpression() throws -> [UInt8] {
             skipWhitespace()
             
-            if let dynamicFunctionCall = compileDynamicFunctionCall() {
+            if let dynamicFunctionCall = try compileDynamicFunctionCall() {
                 return [0x02] + dynamicFunctionCall
             }
             
-            if let parameter = makeParameter() {
+            if let parameter = try makeParameter() {
                 return [0x05] + parameter
             }
             
-            if let literal = compileLiteral() {
+            if let literal = try compileLiteral() {
                 return [0x03] + literal
             }
             
             for (variableName, variableId) in variables {
-                if scanBytes(variableName) {
+                if try scanBytes(variableName) {
                     return [0x04] + variableId.bytes
                 }
             }
             
-            fatalError("Invalid expression")
+            throw CompilerError.invalidExpression
         }
         
-        func compileDynamicFunctionCall() -> [UInt8]? {
-            guard scanScope("Swift") else {
+        func compileDynamicFunctionCall() throws -> [UInt8]? {
+            guard try scanScope("Swift") else {
                 return nil
             }
             
@@ -250,7 +260,7 @@ public class KittenScriptCompiler {
             var parameters = [UInt8]()
             
             guard code[position] == SpecialCharacters.functionParametersOpen.rawValue else {
-                fatalError("Expected `(` to open function call. Found `\(code[position])`")
+                throw CompilerError.invalidCharacter(found: code[position], expected: SpecialCharacters.functionParametersOpen.rawValue)
             }
             
             position += 1
@@ -264,7 +274,7 @@ public class KittenScriptCompiler {
                     position += 1
                     return functionNameBytes + parameters + [0x00]
                 } else if parameters.count > 0 && code[position] != SpecialCharacters.comma.rawValue {
-                    fatalError("Unexpected character \(code[position])")
+                    throw CompilerError.invalidCharacter(found: code[position], expected: SpecialCharacters.comma.rawValue)
                 } else if code[position] == SpecialCharacters.comma.rawValue {
                     position += 1
                 }
@@ -273,7 +283,7 @@ public class KittenScriptCompiler {
                 let word = makeWord()
                 
                 guard word.count > 0 else {
-                    fatalError("Invalid argument length")
+                    throw CompilerError.invalidExpression
                 }
                 
                 parameters.append(contentsOf: word + [0x00])
@@ -281,22 +291,22 @@ public class KittenScriptCompiler {
                 skipWhitespace()
                 
                 guard code[position] == SpecialCharacters.colon.rawValue else {
-                    fatalError("Expected `:` to open function call. Found `\(code[position])`")
+                    throw CompilerError.invalidCharacter(found: code[position], expected: SpecialCharacters.colon.rawValue)
                 }
                 
                 position += 1
                 
                 skipWhitespace()
                 
-                parameters.append(contentsOf: compileExpression())
+                parameters.append(contentsOf: try compileExpression())
                 
                 skipWhitespace()
             }
             
-            fatalError("Unclosed function parameters. Missing `)`")
+            throw CompilerError.missingCharacter(expected: SpecialCharacters.functionParametersClose.rawValue)
         }
         
-        func compileStatement(fromData code: [UInt8], position: inout Int) -> [UInt8] {
+        func compileStatement(fromData code: [UInt8], position: inout Int) throws -> [UInt8] {
             var binary = [UInt8]()
             
             let wordCode = makeWord()
@@ -305,13 +315,13 @@ public class KittenScriptCompiler {
                 switch word {
                 case .if:
                     binary.append(0x01)
-                    binary.append(contentsOf: compileExpression())
-                    let ifBlock = makeBlock(fromData: code, position: &position)
+                    binary.append(contentsOf: try compileExpression())
+                    let ifBlock = try makeBlock(fromData: code, position: &position)
                     
                     skipWhitespace()
                     
                     if makeWord() == Word.else.makeBytes() {
-                        let elseBlock = makeBlock(fromData: code, position: &position)
+                        let elseBlock = try makeBlock(fromData: code, position: &position)
                         
                         binary.append(contentsOf: UInt32(ifBlock.count).bytes)
                         binary.append(contentsOf: UInt32(elseBlock.count).bytes)
@@ -325,7 +335,7 @@ public class KittenScriptCompiler {
                         binary.append(contentsOf: ifBlock)
                     }
                 case .return:
-                    return [0x05] + compileExpression()
+                    return [0x05] + (try compileExpression())
                 case .for:
                     binary.append(0x02)
                     
@@ -334,7 +344,7 @@ public class KittenScriptCompiler {
                     let variableName = makeWord()
                     
                     guard variableName.count > 0 else {
-                        fatalError("Empty variable name")
+                        throw CompilerError.invalidExpression
                     }
                     
                     let variableId = (reservedVariables.sorted().last ?? 0) + 1
@@ -349,33 +359,33 @@ public class KittenScriptCompiler {
                     let wordBytes = makeWord()
                     
                     guard wordBytes == Word.in.makeBytes() else {
-                        fatalError("Invalid word \(wordBytes)")
+                        throw CompilerError.unexpectedCharacters(expected: Word.in.makeBytes())
                     }
                     
-                    binary.append(contentsOf: compileExpression())
+                    binary.append(contentsOf: try compileExpression())
                     
-                    let block = makeBlock(fromData: code, position: &position)
+                    let block = try makeBlock(fromData: code, position: &position)
                     
                     binary.append(contentsOf: [0x03, 0x04])
                     binary.append(contentsOf: UInt32(block.count + 5).bytes)
                     binary.append(contentsOf: block)
                     binary.append(0x00)
                 default:
-                    fatalError("Invalid usage of \(word)")
+                    throw CompilerError.invalidExpression
                 }
             } else {
                 position -= wordCode.count
-                binary.append(contentsOf: [0x04] + compileExpression())
+                binary.append(contentsOf: [0x04] + (try compileExpression()))
             }
             
             return binary
         }
         
-        func makeBlock(fromData code: [UInt8], position: inout Int) -> [UInt8] {
+        func makeBlock(fromData code: [UInt8], position: inout Int) throws -> [UInt8] {
             skipWhitespace()
             
             guard code[position] == SpecialCharacters.codeBlockOpen.rawValue else {
-                fatalError("Invalid character \(code[position])")
+                throw CompilerError.invalidCharacter(found: code[position], expected: SpecialCharacters.codeBlockOpen.rawValue)
             }
             
             position += 1
@@ -391,11 +401,11 @@ public class KittenScriptCompiler {
                     return block
                 }
                 
-                let statement = compileStatement(fromData: code, position: &position)
+                let statement = try compileStatement(fromData: code, position: &position)
                 block.append(contentsOf: statement)
             }
             
-            fatalError("Unclosed code block. Missing `}`")
+            throw CompilerError.missingCharacter(expected: SpecialCharacters.codeBlockClose.rawValue)
         }
         
         var binary = [UInt8]()
@@ -407,7 +417,7 @@ public class KittenScriptCompiler {
                 return UInt32(binary.count + 5).bytes + binary + [0x00]
             }
             
-            let statement = compileStatement(fromData: code, position: &position)
+            let statement = try compileStatement(fromData: code, position: &position)
             
             binary.append(contentsOf: statement)
         }

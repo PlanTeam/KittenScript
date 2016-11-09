@@ -1,0 +1,8 @@
+Hello! WORLD
+{{>
+for a in ["hont", "hoi"] {
+Swift.render(string: a)
+}
+<}}
+
+WAUW
