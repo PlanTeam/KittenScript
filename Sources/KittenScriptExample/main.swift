@@ -28,7 +28,8 @@ for resource in resources {
             return nil
         },
         "debug": { parameters in
-            print(parameters["message"])
+            let message = parameters["message"]?.value as? String
+            print(message)
             return nil
         }
     ]))

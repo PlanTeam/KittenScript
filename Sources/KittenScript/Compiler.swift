@@ -133,7 +133,7 @@ public class KittenScriptCompiler {
             
             while position < code.count {
                 if code[position] == SpecialCharacters.stringLiteralQuote.rawValue && code[position - 1] != SpecialCharacters.backslash.rawValue {
-                    return [0x02] + UInt32(stringLiteral.count).bytes + stringLiteral
+                    return [0x01] + UInt32(stringLiteral.count).bytes + stringLiteral
                 } else if code[position] == SpecialCharacters.stringLiteralQuote.rawValue && code[position - 1] == SpecialCharacters.backslash.rawValue {
                     stringLiteral.removeLast()
                 }
@@ -206,7 +206,7 @@ public class KittenScriptCompiler {
             skipWhitespace()
             
             if let dynamicFunctionCall = compileDynamicFunctionCall() {
-                return [0x03] + dynamicFunctionCall
+                return [0x02] + dynamicFunctionCall
             }
             
             if let parameter = makeParameter() {
@@ -243,7 +243,7 @@ public class KittenScriptCompiler {
                 defer { position += 1 }
                 
                 if code[position] == SpecialCharacters.functionParametersClose.rawValue {
-                    return [0x02] + functionNameBytes + parameters + [0x00]
+                    return functionNameBytes + parameters + [0x00]
                 } else if parameters.count > 0 && code[position] != SpecialCharacters.comma.rawValue {
                     fatalError("Unexpected character \(code[position])")
                 }

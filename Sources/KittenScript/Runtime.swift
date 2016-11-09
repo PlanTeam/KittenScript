@@ -38,7 +38,7 @@ public struct KittenScriptValue: ExpressibleByBooleanLiteral, ExpressibleByStrin
         self.binary = binary
     }
     
-    var value: Any? {
+    public var value: Any? {
         switch self.binary[0] {
         case 0x00:
             return nil
