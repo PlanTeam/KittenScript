@@ -1,3 +1,5 @@
+import Foundation
+
 public class KittenScriptCompiler {
     enum Word: String {
         case `if`, `else`, `return`, `for`, `in`
@@ -26,9 +28,17 @@ public class KittenScriptCompiler {
         ($0.makeBytes(), $0)
     }
     
-    public static func compile(_ code: String) -> [UInt8] {
-        let code = [UInt8](code.utf8)
+    public static func compile(atPath path: String) -> KittenScriptCode {
+        guard let data = NSData(contentsOfFile: path) else {
+            fatalError("Error loading file at \(path)")
+        }
+        var bytes = [UInt8](repeating: 0, count: data.length)
+        data.getBytes(&bytes, length: bytes.count)
         
+        return KittenScriptCode(compile(bytes))
+    }
+    
+    static func compile(_ code: [UInt8]) -> [UInt8] {
         var position = 0
         
         let whitespace: [UInt8] = [0x20, 0x0a]

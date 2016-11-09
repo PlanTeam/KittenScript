@@ -1,0 +1,5 @@
+if parameters.sample {
+  Swift.debug("condition was true")
+} else {
+  Swift.debug("condition was false")
+}

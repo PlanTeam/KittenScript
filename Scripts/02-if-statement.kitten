@@ -1,5 +1,0 @@
-if parameters.sample {
-  debug("condition was true")
-} else {
-  debug("condition was false")
-}
