@@ -18,16 +18,20 @@ let resources = [
 ]
 
 for resource in resources {
-    //let compiledCode = KittenScriptCompiler.compile(atPath: workDir + resource)
+    let compiledCode = KittenScriptCompiler.compile(atPath: workDir + resource)
     
-    //print(compiledCode)
+    print(compiledCode)
     
-    /*print(try! compiledCode.run(withParameters: [:], inContext: [:], dynamicFunctions: [
+    print(try! compiledCode.run(withParameters: ["sample": true], inContext: [:], dynamicFunctions: [
         "hello": { parameters in
             print("hello")
             return nil
+        },
+        "debug": { parameters in
+            print(parameters["message"])
+            return nil
         }
-        ]) ?? [])*/
+    ]))
 }
 
 let compiledCode = KittenScriptCompiler.compile(atPath: "/Users/joannis/Desktop/code.swift")
@@ -36,4 +40,4 @@ print(try! compiledCode.run(withParameters: [:], inContext: [:], dynamicFunction
         print("hello")
         return nil
     }
-    ]) ?? [])
+]))

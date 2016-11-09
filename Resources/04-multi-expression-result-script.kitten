@@ -1,5 +1,5 @@
-if parameters.input {
-  result: true
+if Parameters.sample {
+  return true
 }
 
-result: false
+return false

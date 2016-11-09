@@ -16,8 +16,17 @@ public class KittenScriptCompiler {
         case arrayBlockOpen = 0x5b
         case arrayBlockClose = 0x5d
         
+        case functionParametersOpen = 0x28
+        case functionParametersClose = 0x29
+        
         case comma = 0x2c
         case dot = 0x2e
+        
+        case colon = 0x3a
+        
+        case backslash = 0x5c
+        
+        case stringLiteralQuote = 0x22
     }
     
     static let wordCache: [Word] = [
@@ -42,7 +51,7 @@ public class KittenScriptCompiler {
         var position = 0
         
         let whitespace: [UInt8] = [0x20, 0x0a]
-        let wordExcludedCharacters: [UInt8] = whitespace + [SpecialCharacters.comma.rawValue, SpecialCharacters.arrayBlockOpen.rawValue, SpecialCharacters.arrayBlockClose.rawValue]
+        let wordExcludedCharacters: [UInt8] = whitespace + [SpecialCharacters.comma.rawValue, SpecialCharacters.dot.rawValue, SpecialCharacters.arrayBlockOpen.rawValue, SpecialCharacters.arrayBlockClose.rawValue, SpecialCharacters.functionParametersOpen.rawValue, SpecialCharacters.functionParametersClose.rawValue, SpecialCharacters.colon.rawValue]
         var variables = [([UInt8], UInt32)]()
         var reservedVariables = [UInt32]()
         
@@ -83,7 +92,7 @@ public class KittenScriptCompiler {
         
         func compileArrayLiteral() -> [UInt8] {
             guard code[position] == SpecialCharacters.arrayBlockOpen.rawValue else {
-                fatalError("Invalid character \(code[position])")
+                fatalError("Invalid character \(code[position]), expected `[`")
             }
             
             position += 1
@@ -104,7 +113,7 @@ public class KittenScriptCompiler {
                 if code[position] == SpecialCharacters.arrayBlockClose.rawValue {
                     return [0x05] + array + [0x00]
                 } else if code[position] != SpecialCharacters.comma.rawValue {
-                    fatalError("Unexpected character \(code[position])")
+                    fatalError("Unexpected character \(code[position]), expected `]`")
                 }
                 
                 position += 1
@@ -113,9 +122,37 @@ public class KittenScriptCompiler {
             fatalError("Unclosed array block. Missing `]`")
         }
         
+        func compileStringLiteral() -> [UInt8] {
+            guard code[position] == SpecialCharacters.stringLiteralQuote.rawValue else {
+                fatalError("Invalid character \(code[position]), expected `\"`")
+            }
+            
+            position += 1
+            
+            var stringLiteral = [UInt8]()
+            
+            while position < code.count {
+                if code[position] == SpecialCharacters.stringLiteralQuote.rawValue && code[position - 1] != SpecialCharacters.backslash.rawValue {
+                    return [0x02] + UInt32(stringLiteral.count).bytes + stringLiteral
+                } else if code[position] == SpecialCharacters.stringLiteralQuote.rawValue && code[position - 1] == SpecialCharacters.backslash.rawValue {
+                    stringLiteral.removeLast()
+                }
+                
+                stringLiteral.append(code[position])
+                
+                position += 1
+            }
+            
+            fatalError("Unclosed String literal. Missing `\"`")
+        }
+        
         func compileLiteral() -> [UInt8]? {
             if code[position] == SpecialCharacters.arrayBlockOpen.rawValue {
                 return compileArrayLiteral()
+            }
+            
+            if code[position] == SpecialCharacters.stringLiteralQuote.rawValue {
+                return compileStringLiteral()
             }
             
             let word = makeWord()
@@ -129,14 +166,107 @@ public class KittenScriptCompiler {
             return nil
         }
         
+        func scanScope(_ scope: String) -> Bool {
+            var scanPosition = 0
+            
+            for character in [UInt8](scope.utf8) {
+                defer { scanPosition += 1 }
+                
+                guard position + scanPosition < code.count, code[position + scanPosition] == character else {
+                    return false
+                }
+            }
+            
+            position += scanPosition
+            
+            guard code[position] == SpecialCharacters.dot.rawValue else {
+                fatalError("Unexpected character \(code[position]) after `Parameters` scope entry")
+            }
+            
+            position += 1
+            
+            return true
+        }
+        
+        func makeParameter() -> [UInt8]? {
+            guard scanScope("Parameters") else {
+                return nil
+            }
+            
+            let word = makeWord() + [0x00]
+            
+            guard word.count > 0 else {
+                fatalError("No parametername provided after `Parameter.` scope entry")
+            }
+            
+            return word
+        }
+        
         func compileExpression() -> [UInt8] {
             skipWhitespace()
+            
+            if let dynamicFunctionCall = compileDynamicFunctionCall() {
+                return [0x03] + dynamicFunctionCall
+            }
+            
+            if let parameter = makeParameter() {
+                return [0x05] + parameter
+            }
             
             if let literal = compileLiteral() {
                 return [0x03] + literal
             }
             
             fatalError("Invalid expression")
+        }
+        
+        func compileDynamicFunctionCall() -> [UInt8]? {
+            guard scanScope("Swift") else {
+                return nil
+            }
+            
+            let functionNameBytes = makeWord() + [0x00]
+            
+            skipWhitespace()
+            
+            var parameters = [UInt8]()
+            
+            guard code[position] == SpecialCharacters.functionParametersOpen.rawValue else {
+                fatalError("Expected `(` to open function call. Found `\(code[position])`")
+            }
+            
+            position += 1
+            
+            skipWhitespace()
+            
+            while position < code.count {
+                defer { position += 1 }
+                
+                if code[position] == SpecialCharacters.functionParametersClose.rawValue {
+                    return [0x02] + functionNameBytes + parameters + [0x00]
+                } else if parameters.count > 0 && code[position] != SpecialCharacters.comma.rawValue {
+                    fatalError("Unexpected character \(code[position])")
+                }
+                
+                skipWhitespace()
+                parameters.append(contentsOf: makeWord() + [0x00])
+                
+                skipWhitespace()
+                
+                guard code[position] == SpecialCharacters.colon.rawValue else {
+                    fatalError("Expected `:` to open function call. Found `\(code[position])`")
+                }
+                
+                position += 1
+                
+                skipWhitespace()
+                
+                parameters.append(contentsOf: compileExpression())
+                
+                skipWhitespace()
+            }
+            
+            fatalError("Unclosed function parameters. Missing `)`")
         }
         
         func compileStatement(fromData code: [UInt8], position: inout Int, exposingVariables variables: [([UInt8], UInt32)]) -> [UInt8] {
@@ -206,7 +336,8 @@ public class KittenScriptCompiler {
                     fatalError("Invalid usage of \(word)")
                 }
             } else {
-                
+                position -= wordCode.count
+                binary.append(contentsOf: [0x04] + compileExpression())
             }
             
             return binary
@@ -243,6 +374,10 @@ public class KittenScriptCompiler {
         
         while position < code.count {
             skipWhitespace()
+            
+            guard position < code.count else {
+                return UInt32(binary.count + 5).bytes + binary + [0x00]
+            }
             
             let statement = compileStatement(fromData: code, position: &position, exposingVariables: variables)
             
