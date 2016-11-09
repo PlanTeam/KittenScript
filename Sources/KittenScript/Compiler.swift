@@ -117,6 +117,8 @@ public class KittenScriptCompiler {
                 }
                 
                 position += 1
+                
+                skipWhitespace()
             }
             
             fatalError("Unclosed array block. Missing `]`")
@@ -133,6 +135,7 @@ public class KittenScriptCompiler {
             
             while position < code.count {
                 if code[position] == SpecialCharacters.stringLiteralQuote.rawValue && code[position - 1] != SpecialCharacters.backslash.rawValue {
+                    position += 1
                     return [0x01] + UInt32(stringLiteral.count).bytes + stringLiteral
                 } else if code[position] == SpecialCharacters.stringLiteralQuote.rawValue && code[position - 1] == SpecialCharacters.backslash.rawValue {
                     stringLiteral.removeLast()
@@ -155,29 +158,38 @@ public class KittenScriptCompiler {
                 return compileStringLiteral()
             }
             
-            let word = makeWord()
-            
-            if word == [UInt8]("true".utf8) {
+            if scanWord("true") {
                 return [0x03, 0x01]
-            } else if word == [UInt8]("false".utf8) {
+            } else if scanWord("false") {
                 return [0x03, 0x00]
             }
             
             return nil
         }
         
-        func scanScope(_ scope: String) -> Bool {
+        func scanWord(_ word: String) -> Bool {
+            return scanBytes([UInt8](word.utf8))
+        }
+        
+        func scanBytes(_ bytes: [UInt8]) -> Bool {
             var scanPosition = 0
             
-            for character in [UInt8](scope.utf8) {
+            for byte in bytes {
                 defer { scanPosition += 1 }
                 
-                guard position + scanPosition < code.count, code[position + scanPosition] == character else {
+                guard position + scanPosition < code.count, code[position + scanPosition] == byte else {
                     return false
                 }
             }
             
             position += scanPosition
+            return true
+        }
+        
+        func scanScope(_ scope: String) -> Bool {
+            if !scanWord(scope) {
+                return false
+            }
             
             guard code[position] == SpecialCharacters.dot.rawValue else {
                 fatalError("Unexpected character \(code[position]) after `Parameters` scope entry")
@@ -217,6 +229,12 @@ public class KittenScriptCompiler {
                 return [0x03] + literal
             }
             
+            for (variableName, variableId) in variables {
+                if scanBytes(variableName) {
+                    return [0x04] + variableId.bytes
+                }
+            }
+            
             fatalError("Invalid expression")
         }
         
@@ -240,16 +258,25 @@ public class KittenScriptCompiler {
             skipWhitespace()
             
             while position < code.count {
-                defer { position += 1 }
+                skipWhitespace()
                 
                 if code[position] == SpecialCharacters.functionParametersClose.rawValue {
+                    position += 1
                     return functionNameBytes + parameters + [0x00]
                 } else if parameters.count > 0 && code[position] != SpecialCharacters.comma.rawValue {
                     fatalError("Unexpected character \(code[position])")
+                } else if code[position] == SpecialCharacters.comma.rawValue {
+                    position += 1
                 }
                 
                 skipWhitespace()
-                parameters.append(contentsOf: makeWord() + [0x00])
+                let word = makeWord()
+                
+                guard word.count > 0 else {
+                    fatalError("Invalid argument length")
+                }
+                
+                parameters.append(contentsOf: word + [0x00])
                 
                 skipWhitespace()
                 
@@ -269,7 +296,7 @@ public class KittenScriptCompiler {
             fatalError("Unclosed function parameters. Missing `)`")
         }
         
-        func compileStatement(fromData code: [UInt8], position: inout Int, exposingVariables variables: [([UInt8], UInt32)]) -> [UInt8] {
+        func compileStatement(fromData code: [UInt8], position: inout Int) -> [UInt8] {
             var binary = [UInt8]()
             
             let wordCode = makeWord()
@@ -279,12 +306,12 @@ public class KittenScriptCompiler {
                 case .if:
                     binary.append(0x01)
                     binary.append(contentsOf: compileExpression())
-                    let ifBlock = makeBlock(fromData: code, position: &position, exposingVariables: variables)
+                    let ifBlock = makeBlock(fromData: code, position: &position)
                     
                     skipWhitespace()
                     
                     if makeWord() == Word.else.makeBytes() {
-                        let elseBlock = makeBlock(fromData: code, position: &position, exposingVariables: variables)
+                        let elseBlock = makeBlock(fromData: code, position: &position)
                         
                         binary.append(contentsOf: UInt32(ifBlock.count).bytes)
                         binary.append(contentsOf: UInt32(elseBlock.count).bytes)
@@ -311,6 +338,7 @@ public class KittenScriptCompiler {
                     }
                     
                     let variableId = (reservedVariables.sorted().last ?? 0) + 1
+                    variables.append((variableName, variableId))
                     
                     reservedVariables.append(variableId)
                     
@@ -326,7 +354,7 @@ public class KittenScriptCompiler {
                     
                     binary.append(contentsOf: compileExpression())
                     
-                    let block = makeBlock(fromData: code, position: &position, exposingVariables: variables + [(variableName, variableId)])
+                    let block = makeBlock(fromData: code, position: &position)
                     
                     binary.append(contentsOf: [0x03, 0x04])
                     binary.append(contentsOf: UInt32(block.count + 5).bytes)
@@ -343,7 +371,7 @@ public class KittenScriptCompiler {
             return binary
         }
         
-        func makeBlock(fromData code: [UInt8], position: inout Int, exposingVariables: [([UInt8], UInt32)]) -> [UInt8] {
+        func makeBlock(fromData code: [UInt8], position: inout Int) -> [UInt8] {
             skipWhitespace()
             
             guard code[position] == SpecialCharacters.codeBlockOpen.rawValue else {
@@ -357,13 +385,13 @@ public class KittenScriptCompiler {
             while position < code.count {
                 skipWhitespace()
                 
-                defer { position += 1}
+                defer { position += 1 }
                 
                 if code[position] == SpecialCharacters.codeBlockClose.rawValue {
                     return block
                 }
                 
-                let statement = compileStatement(fromData: code, position: &position, exposingVariables: exposingVariables)
+                let statement = compileStatement(fromData: code, position: &position)
                 block.append(contentsOf: statement)
             }
             
@@ -379,7 +407,7 @@ public class KittenScriptCompiler {
                 return UInt32(binary.count + 5).bytes + binary + [0x00]
             }
             
-            let statement = compileStatement(fromData: code, position: &position, exposingVariables: variables)
+            let statement = compileStatement(fromData: code, position: &position)
             
             binary.append(contentsOf: statement)
         }

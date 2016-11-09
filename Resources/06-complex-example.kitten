@@ -1,0 +1,14 @@
+if Parameters.sample {
+  if Parameters.otherSample {
+    for value in [true, false, "henk", "piet"] {
+      Swift.print(literal: value, otherLiteral: value, boolLiteral: true, stringLiteral: "henk")
+    }
+    return Swift.helloString(forKey: "bob")
+  } else {
+    return true
+  }
+} else {
+  Swift.helloString(forKey: "klaas")
+}
+
+return false
