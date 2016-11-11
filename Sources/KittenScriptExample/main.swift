@@ -58,39 +58,10 @@ for resource in resources {
     ]))
 }
 
-let compiledCode = try KittenScriptTemplate(atPath: workDir + "template-01.kitten")
+let template = try KittenScriptTemplate(atPath: workDir + "template-02.kitten")!
 
-print(try! compiledCode?.run(withParameters: [
-    "sample": true,
-    "otherSample": true
-    ], inContext: [:], dynamicFunctions: [
-        "hello": { parameters in
-            print("hello")
-            return nil
-        },
-        "debug": { parameters in
-            let message = parameters["message"]?.value as? String
-            print(message ?? "")
-            return nil
-        },
-        "print": { parameters in
-            for parameter in parameters {
-                print(parameter.key)
-                print(parameter.value.value)
-            }
-            print()
-            return nil
-        },
-        "helloString": { parameters in
-            let dict: [String: String] = [
-                "bob": "Hoi Bob, jij bent niet klaas.",
-                "klaas": "Hoi Klaas, jij bent niet bob."
-            ]
-            
-            if let key = parameters["forKey"]?.value as? String {
-                print(dict[key])
-            }
-            
-            return nil
-        }
-    ]))
+let result = try! template.run(withParameters: [
+    "name": "World"
+    ], inContext: [:], dynamicFunctions: [:]) ?? ""
+
+print(result)

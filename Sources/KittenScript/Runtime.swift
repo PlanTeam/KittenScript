@@ -23,15 +23,15 @@ public struct KittenScriptValue: ExpressibleByBooleanLiteral, ExpressibleByStrin
     }
     
     public init(stringLiteral value: String) {
-        self.binary = UInt32(value.characters.count).bytes + [UInt8](value.utf8)
+        self.binary = [0x01] + UInt32(value.characters.count).bytes + [UInt8](value.utf8)
     }
     
     public init(unicodeScalarLiteral value: String) {
-        self.binary = UInt32(value.characters.count).bytes + [UInt8](value.utf8)
+        self.binary = [0x01] + UInt32(value.characters.count).bytes + [UInt8](value.utf8)
     }
     
     public init(extendedGraphemeClusterLiteral value: String) {
-        self.binary = UInt32(value.characters.count).bytes + [UInt8](value.utf8)
+        self.binary = [0x01] + UInt32(value.characters.count).bytes + [UInt8](value.utf8)
     }
     
     init(binary: [UInt8]) {
@@ -196,7 +196,7 @@ func makeParameters(context: RuntimeContext) throws -> [String: KittenScriptValu
         let parameterName = try makeCString(context: context)
         let expression = try makeExpression(context: context)
         
-        parameters[parameterName] = KittenScriptValue(binary: expression.binary)
+        parameters[parameterName] = expression
     }
     
     return parameters
